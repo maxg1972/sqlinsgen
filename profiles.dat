@@ -1,0 +1,17 @@
+{
+    "tabbed_csv": {
+        "string_sep": "",
+        "column_sep": "\t",
+        "block_size": 10
+    },
+    "classic_csv": {
+        "string_sep": "\"",
+        "column_sep": ",",
+        "block_size": 10
+    },
+    "excel_csv": {
+        "string_sep": "",
+        "column_sep": ",",
+        "block_size": 10
+    }
+}
