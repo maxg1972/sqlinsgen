@@ -3,39 +3,49 @@
 '''
 This script reads tabled (from an input file) data and generates sql INSERT statements 
 (into an output file) to copy the data into a database.
-The input file must be a "csv file".
+The input file must be a "csv" or "xls" file. The "xls" file is converted to "csv" format before parsed.
 The structure of the input csv files (column separator and string delimiter) can be defined 
 in a configuration file (profile.dat) or set "on the fly" using the switches.
 '''
 
 __author__ = "Massimo Guidi"
 __author_email__ = "maxg1972@gmail.com"
-__version__ = "1.0"
+__version__ = "1.1"
 __python_version__ = "3.x"
 
 import argparse
 import sys
-from os import path
+import os
 import json
 import csv
 import re
+import tempfile
+import xlrd
+import zipfile
 
 class Options(argparse.ArgumentParser):
-    '''
-    Extends argparse.ArgumentParser to handle errors
-    '''
+    """Extends argparse.ArgumentParser to handle errors
+    """
     def error(self, message):
-        script_name = path.splitext(path.basename(__file__))[0]
+        script_name = os.path.splitext(os.path.basename(__file__))[0]
         sys.stderr.write("%s: %s. Use '%s --help'\n" % (script_name, message, script_name))
         #self.print_help()
         sys.exit(2)
 
 
 def load_profile(profile_name: str) -> dict:
+    """Load configuration profiles from 'profile.dat' (this file must be in script folder)
+    
+    Arguments:
+        profile_name {str} -- name of profile info to load
+    
+    Returns:
+        dict -- profile's info dictionary
+    """
     '''
-    Load configuration profiles from 'profile.dat' (this file must be in script folder)
+    
     '''
-    profile = "%s/profiles.dat" % path.split(__file__)[0]
+    profile = "%s/profiles.dat" % os.path.split(__file__)[0]
     with open(profile, encoding='utf-8-sig') as json_file:
         text = json_file.read()
         json_data = json.loads(text)
@@ -44,9 +54,11 @@ def load_profile(profile_name: str) -> dict:
 
 
 def get_arguments() -> Options:
-    '''
-    Define the script options, read the command line arguments and check their validity
-    '''
+    """Define the script options, read the command line arguments and check their validity
+    
+    Returns:
+        Options -- strinpt options
+    """
     # Get script arguments
     opts = Options(description="Converts data stored in a file into sql INSERT statements")
     opts.add_argument("--table-name", action="store", dest="tablename", help="name of the table for INSERT statements")
@@ -55,6 +67,7 @@ def get_arguments() -> Options:
     opts.add_argument("--string-sep", action="store", dest="stringsep", help="input file string delimiter (profile setting overwrite it)")
     opts.add_argument("--block-size", action="store", dest="blocksize", help="number of VALUE's items for each INSERT statement (profile settings overwrite it)", type=int)
     opts.add_argument("--source-file", action="store", dest="inputfile", help="source file name")
+    opts.add_argument("--source-file-type", action="store", dest="inputfiletype", help="source file name type (CSV, XLS or ODS)")
     opts.add_argument("--output-file", action="store", dest="outputfile", help="output file name")
 
     args = opts.parse_args()
@@ -62,6 +75,7 @@ def get_arguments() -> Options:
     # Set default parameters values if omitted
     args.tablename = args.tablename or ""
     args.inputfile = args.inputfile or ""
+    args.inputfiletype = (args.inputfiletype or "CSV").upper()
     args.outputfile = args.outputfile or ""
     args.stringsep = args.stringsep or ""
     args.columnsep = args.columnsep or ""
@@ -74,7 +88,7 @@ def get_arguments() -> Options:
         opts.error("Table name, input and output file are required")
         return None
 
-    if not path.exists(args.inputfile):
+    if not os.path.exists(args.inputfile):
         opts.error("Input file '%s' not found" % args.inputfile)
         return None
 
@@ -88,24 +102,58 @@ def get_arguments() -> Options:
     return args
 
 
-def normalize_field_name(field_name):
-    '''
-    If field name contains special characters, encloses it in square brackets
-    '''
+def xls_to_csv(opts: Options) -> str:
+    """Convert excel input file in csv format and store it in a temporary file
+    
+    Arguments:
+        opts {Options} -- script options
+    
+    Returns:
+        str -- Name of temporary file
+    """
+    workbook = xlrd.open_workbook(opts.inputfile)
+    sheet = workbook.sheet_by_index(0)
+
+    tmp_file = tempfile.mkstemp(suffix=".tmp")[1]
+    your_csv_file = open(tmp_file, 'w')
+    wr = csv.writer(your_csv_file, delimiter=opts.columnsep, quotechar=opts.stringsep, quoting=csv.QUOTE_ALL)
+
+    for rownum in range(sheet.nrows):
+        wr.writerow(sheet.row_values(rownum))
+
+    your_csv_file.close()
+
+    return tmp_file
+
+
+def normalize_field_name(field_name: str) -> str:
+    """If field name contains special characters, encloses it in square brackets
+    
+    Arguments:
+        field_name {str} -- original field name 
+    
+    Returns:
+        str -- normalized field name
+    """
     if not re.match("^[A-Za-z0-9]+$", field_name):
         field_name = "[%s]" % field_name
 
     return field_name
 
 
-def normalize_filed_value(value):
-    '''
-    Normalize value:
+def normalize_filed_value(value: str) -> str:
+    """Normalize value:
     - does not convert the value NULL
     - removes string separators
     - escapes single quotes
     - encloses the value in single quotes
-    '''
+    
+    Arguments:
+        value {str} -- original value
+    
+    Returns:
+        str -- normalized value (enclosed in singole quotes)
+    """
     if value == "NULL":
         return value
 
@@ -117,13 +165,21 @@ def normalize_filed_value(value):
 
 
 def create_sql(opts: Options):
-    '''
-    Reads line by line from the input file, generates SQL statement and add it to the output file
-    '''
+    """Reads line by line from the input file, generates SQL statement and add it to the output file.
+    If input if type is XLS or ODS, convert it to csv format before start generation
+    
+    Arguments:
+        opts {Options} -- script options
+    """
     fields = ""
     line_count = 0
     block_count = 1
 
+    # Convert excel or calc input file into temporary csv file
+    if opts.inputfiletype == "XLS":
+        opts.inputfile = xls_to_csv(opts)
+
+    # Generation step
     with open(opts.outputfile, 'w+') as fout:
         with open(opts.inputfile) as fin:
             csv_reader = csv.reader(fin, delimiter=opts.columnsep)
@@ -148,6 +204,10 @@ def create_sql(opts: Options):
                     line_count += 1
 
         print(f'Processed {line_count - 1} lines.')
+
+    # Remove temporary file
+    if opts.inputfiletype != "CSV" and os.path.exists(opts.inputfile):
+        os.remove(opts.inputfile)
 
 
 if __name__ == "__main__":
