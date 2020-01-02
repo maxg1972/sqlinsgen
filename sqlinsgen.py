@@ -67,7 +67,7 @@ def get_arguments() -> Options:
     opts.add_argument("--string-sep", action="store", dest="stringsep", help="input file string delimiter (profile setting overwrite it)")
     opts.add_argument("--block-size", action="store", dest="blocksize", help="number of VALUE's items for each INSERT statement (profile settings overwrite it)", type=int)
     opts.add_argument("--source-file", action="store", dest="inputfile", help="source file name")
-    opts.add_argument("--source-file-type", action="store", dest="inputfiletype", help="source file name type (CSV, XLS or ODS)")
+    opts.add_argument("--source-file-type", action="store", dest="inputfiletype", help="source file name type (CSV, XLS)")
     opts.add_argument("--output-file", action="store", dest="outputfile", help="output file name")
 
     args = opts.parse_args()
@@ -115,13 +115,11 @@ def xls_to_csv(opts: Options) -> str:
     sheet = workbook.sheet_by_index(0)
 
     tmp_file = tempfile.mkstemp(suffix=".tmp")[1]
-    your_csv_file = open(tmp_file, 'w')
-    wr = csv.writer(your_csv_file, delimiter=opts.columnsep, quotechar=opts.stringsep, quoting=csv.QUOTE_ALL)
 
-    for rownum in range(sheet.nrows):
-        wr.writerow(sheet.row_values(rownum))
-
-    your_csv_file.close()
+    with open(tmp_file,'w') as ftmp:
+        wr = csv.writer(ftmp, delimiter=opts.columnsep, quotechar=opts.stringsep, quoting=csv.QUOTE_ALL)
+        for rownum in range(sheet.nrows):
+            wr.writerow(sheet.row_values(rownum))
 
     return tmp_file
 
@@ -166,7 +164,7 @@ def normalize_filed_value(value: str) -> str:
 
 def create_sql(opts: Options):
     """Reads line by line from the input file, generates SQL statement and add it to the output file.
-    If input if type is XLS or ODS, convert it to csv format before start generation
+    If input if type is XLS, convert it to csv format before start generation
     
     Arguments:
         opts {Options} -- script options
@@ -175,7 +173,7 @@ def create_sql(opts: Options):
     line_count = 0
     block_count = 1
 
-    # Convert excel or calc input file into temporary csv file
+    # Convert excel input file into temporary csv file
     if opts.inputfiletype == "XLS":
         opts.inputfile = xls_to_csv(opts)
 
